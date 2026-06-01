@@ -46,16 +46,17 @@ std::vector<cv::Mat> load_images(std::string filepath) {
 	return images;
 }
 
+//calculates homographic transformation matrix from matches and keypoints
 cv::Mat calculate_h(std::vector<cv::DMatch> matches, std::vector<cv::KeyPoint> keypoints_1, std::vector<cv::KeyPoint> keypoints_2) {
+	std::cout << "matches size: " << matches.size() << std::endl;
 	cv::Mat best_homography;
 	float epsilon = 50.0;
 	std::random_device rd;
 	std::mt19937 rand(rd());
-
+	best_inliers.clear();
 	//RANSAC
 	std::uniform_int_distribution<> rand_int(0, matches.size() - 1);
 	for (int i = 0; i < 100; i++) {
-
 		//Random samples
 		//select 4 random matches
 		std::vector<int> random_matches_index;
@@ -75,17 +76,18 @@ cv::Mat calculate_h(std::vector<cv::DMatch> matches, std::vector<cv::KeyPoint> k
 		cv::Mat h = cv::findHomography(r1, r2);
 
 		std::vector<cv::DMatch> inliers;
+		//loop through all matches and see if we have more inliers than previous iteration
 		for (cv::DMatch match : matches) {
 			cv::Point2f top_point = keypoints_1[match.queryIdx].pt;
 			cv::Point2f bottom_point = keypoints_2[match.trainIdx].pt;
 
 			std::vector<cv::Point2f> src = { top_point }, dst;
-			cv::perspectiveTransform(src, dst, h);
+			cv::perspectiveTransform(src, dst, h); //distance from matching points
 
 			float dx = dst[0].x - bottom_point.x;
 			float dy = dst[0].y - bottom_point.y;
 
-			float dist = sqrt(dx * dx - dy * dy);
+			float dist = sqrt(dx * dx + dy * dy);
 
 			if (dist < epsilon) {
 				inliers.push_back(match);
@@ -98,34 +100,21 @@ cv::Mat calculate_h(std::vector<cv::DMatch> matches, std::vector<cv::KeyPoint> k
 		}
 
 	}
-	return best_homography;
+
+	std::vector<cv::Point2f> best_r1, best_r2;
+	for (cv::DMatch match : best_inliers) {
+		best_r1.push_back(keypoints_1[match.queryIdx].pt);
+		best_r2.push_back(keypoints_2[match.trainIdx].pt);
+	}
+
+	return cv::findHomography(best_r1, best_r2);
 }
 
-int main()
-{
-
-	std::vector<cv::Mat> frames = load_images("frames\\*.jpg");
-	
-	cv::Mat img_1 = frames[39];
-	cv::Mat img_2 = frames[41];
-
-	cv::Ptr<cv::SIFT> sift = sift->create();
-
-	std::vector<cv::KeyPoint> keypoints_1, keypoints_2;
-	sift->detect(img_1, keypoints_1);
-	sift->detect(img_2, keypoints_2);
-
-	cv::Mat descriptors_1,descriptors_2;
-	sift->compute(img_1, keypoints_1, descriptors_1);
-	sift->compute(img_2, keypoints_2, descriptors_2);
-
-	cv::BFMatcher matcher(cv::NORM_L2,true);
-	std::vector<cv::DMatch> matches;
-
-	matcher.match(descriptors_1, descriptors_2, matches);
-
+void draw_matches(cv::Mat img_1, cv::Mat img_2, std::vector<cv::DMatch> matches, std::vector<cv::KeyPoint> keypoints_1, std::vector<cv::KeyPoint> keypoints_2) {
 	cv::Mat concat_img = img_1.clone();
 	cv::vconcat(img_1.clone(), img_2.clone(), concat_img);
+
+	//draw lines between matches using their keypoints and cv::line
 	for (cv::DMatch match : matches) {
 
 		cv::Point top_point = keypoints_1[match.queryIdx].pt;
@@ -137,21 +126,21 @@ int main()
 
 	cv::imshow("Core Part 1", concat_img);
 	cv::waitKey(0);
-	
-	
-	//core part 2
+
+}
+
+void draw_inliers(cv::Mat img_1, cv::Mat img_2, std::vector<cv::DMatch> matches, std::vector<cv::KeyPoint> keypoints_1, std::vector<cv::KeyPoint> keypoints_2) {
 
 	cv::Mat homogaphy_concat_img = img_1.clone();
 	cv::vconcat(img_1.clone(), img_2.clone(), homogaphy_concat_img);
 
-	cv::Mat h = calculate_h(matches, keypoints_1, keypoints_2);
-	
+	//draw lines between matches, green if they are inliers red otherwise
 	for (cv::DMatch match : matches) {
 		cv::Point top_point = keypoints_1[match.queryIdx].pt;
 		cv::Point bottom_point = keypoints_2[match.trainIdx].pt;
 		cv::Point true_bottom_point = cv::Point(bottom_point.x, bottom_point.y + img_1.rows);
 
-		auto found = std::find_if(best_inliers.begin(), best_inliers.end(), [&](const cv::DMatch& m) {
+		auto found = std::find_if(best_inliers.begin(), best_inliers.end(), [&](const cv::DMatch& m) { //lambda to compare match indexes as DMatches dont overload ==
 			return m.queryIdx == match.queryIdx;
 			});
 
@@ -162,22 +151,136 @@ int main()
 			cv::line(homogaphy_concat_img, top_point, true_bottom_point, cv::Scalar(0, 0, 255));
 		}
 	}
-	
+
 	cv::imshow("best inliers", homogaphy_concat_img);
 	cv::waitKey(0);
-	cv::Mat warped;
-	//cv::warpPerspective(img_1, warped, h, output_size);
-	// create a big empty output
-	cv::Mat output = cv::Mat::zeros(cv::Size(img_1.cols+50, img_1.rows+50), img_1.type());
 
-	// copy img_2 into the top left
-	img_2.copyTo(output(cv::Rect(25, 25, img_2.cols, img_2.rows)));
+}
 
-	// warp img_1 on top
-	cv::warpPerspective(img_1, output, h, cv::Size(img_1.cols + 50, img_1.rows + 50),
-		cv::INTER_LINEAR);
-	cv::imshow("warped", output);
+//primary method to calculate homographic translation, using SIFT and a brute force matcher
+cv::Mat compute_homographic_transformation(cv::Mat img_1, cv::Mat img_2, bool draw_examples) {
+	cv::Ptr<cv::SIFT> sift = sift->create();
+
+	std::vector<cv::KeyPoint> keypoints_1, keypoints_2;
+	sift->detect(img_1, keypoints_1);
+	sift->detect(img_2, keypoints_2);
+
+	cv::Mat descriptors_1, descriptors_2;
+	sift->compute(img_1, keypoints_1, descriptors_1);
+	sift->compute(img_2, keypoints_2, descriptors_2);
+
+	cv::BFMatcher matcher(cv::NORM_L2, true);
+	std::vector<cv::DMatch> matches;
+
+	matcher.match(descriptors_1, descriptors_2, matches);
+
+	if (draw_examples) { //for assignment output
+		draw_matches(img_1, img_2, matches, keypoints_1, keypoints_2);
+	}
+
+	cv::Mat h = calculate_h(matches, keypoints_1, keypoints_2);
+
+	if (draw_examples) { //for assignment output
+		draw_inliers(img_1, img_2, matches, keypoints_1, keypoints_2);
+	}
+
+	return h;
+}
+
+void create_stabilised_frames(std::vector<cv::Mat> frames) {
+
+	//create homographic transformations for each frame pair
+	std::vector<cv::Mat> h_transforms;
+	h_transforms.push_back(cv::Mat::eye(3, 3, CV_64FC1));
+	for (int i = 1; i < frames.size(); i++) {
+		std::cout << i << std::endl;
+		cv::Mat current_h = compute_homographic_transformation(frames[i], frames[i - 1], false);
+		h_transforms.push_back(current_h.clone());
+	}
+
+	//calculate and create cumulative homographic transformations for each frame
+	std::vector<cv::Mat> h_tilde_transforms;
+	cv::Mat cumulative = cv::Mat::eye(3, 3, CV_64FC1);
+	for (int i = 1; i < frames.size(); i++) {
+		cumulative = cumulative * h_transforms[i];
+		h_tilde_transforms.push_back(cumulative.clone());
+	}
+
+	//do a weighted average of the sorrounding translations to get a smoother transition
+	std::vector<float> weights = { 0.1, 0.3, 0.5, 0.3, 0.1 }; //guassian weighting
+	std::vector<cv::Mat> h_smooth_transitions;
+	for (int i = 1; i < h_tilde_transforms.size(); i++) {
+
+		cv::Mat smoothed = cv::Mat::zeros(3, 3, CV_64F);
+		float weighted_sum = 0;
+
+		for (int j = -2; j <= 2; j++) {
+			int window_index = i + j;
+			std::cout << int(frames.size() - 1) << " next window " << window_index << std::endl;
+			window_index = window_index = std::min(std::max(0, window_index), int(h_tilde_transforms.size() - 1));
+
+			smoothed += weights[j + 2] * h_tilde_transforms[window_index];
+			weighted_sum += weights[j + 2];
+		}
+
+		h_smooth_transitions.push_back(smoothed / weighted_sum);
+	}
+
+	//turn smoothed transitions into actual translations to be used on images
+	std::vector<cv::Mat> u_transforms;
+	for (int i = 1; i < h_smooth_transitions.size(); i++) {
+		std::cout << i << std::endl;
+		cv::Mat U_i = h_smooth_transitions[i].inv() * h_tilde_transforms[i];
+		u_transforms.push_back(U_i);
+	}
+
+	cv::Mat test_img_1;
+	cv::warpPerspective(frames[45], test_img_1, u_transforms[45], frames[51].size());
+
+	cv::Mat test_img_2;
+	cv::warpPerspective(frames[51], test_img_2, u_transforms[51], frames[51].size());
+	cv::imshow("dpsaoldpsa", test_img_1);
+	cv::imshow("djsaodjaso", test_img_2);
 	cv::waitKey(0);
+}
+
+int main()
+{
+
+	std::vector<cv::Mat> frames = load_images("frames\\*.jpg");
+	
+	cv::Mat img_1 = frames[39];
+	cv::Mat img_2 = frames[41];
+
+	cv::Mat h = compute_homographic_transformation(img_1, img_2, true);
+
+
+	int border = 100; // padding around the outside
+
+	// offset matrix to push img_2 inward
+	cv::Mat translation = (cv::Mat_<double>(3, 3) <<
+		1, 0, border,
+		0, 1, border,
+		0, 0, 1);
+
+	// make canvas big enough to include the border on all sides
+	cv::Size output_size(img_1.cols + border * 2, std::max(img_1.rows, img_2.rows) + border * 2);
+	cv::Mat output(output_size, img_1.type(), cv::Scalar(0, 0, 0)); // green background
+
+	// copy img_2 offset by the border
+	img_2.copyTo(output(cv::Rect(border, border, img_2.cols, img_2.rows)));
+
+	// apply translation to homography so img_1 also gets offset
+	cv::Mat shifted_h = translation * h;
+	cv::warpPerspective(img_1, output, shifted_h, output_size,
+		cv::INTER_LINEAR, cv::BORDER_TRANSPARENT);
+
+	cv::imshow("stitched", output);
+	cv::waitKey(0);
+
+	std::cout << "frames size: " << frames.size() << std::endl;
+
+	create_stabilised_frames(frames);
 
 }
 
