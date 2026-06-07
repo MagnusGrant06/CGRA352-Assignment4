@@ -3,6 +3,9 @@
 #include <iostream>
 #include <random>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
+
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -44,6 +47,25 @@ std::vector<cv::Mat> load_images(std::string filepath) {
 
 	std::cout << "Finished loading light field" << std::endl;
 	return images;
+}
+
+//output the images to the disk with the format Stable000.png
+void save_images(std::vector<cv::Mat> images) {
+
+	int i = 0;
+	for (cv::Mat img : images) {
+
+		if (img.empty()) {
+			std::cerr << " image file is empty, could not save" << std::endl;
+		}
+
+		std::ostringstream filename;
+		filename << "Stable" << std::setw(3) << std::setfill('0') << i << ".png";
+
+		cv::imwrite(filename.str(), img);
+		i++;
+
+	}
 }
 
 //calculates homographic transformation matrix from matches and keypoints
@@ -201,7 +223,7 @@ void create_stabilised_frames(std::vector<cv::Mat> frames) {
 	//calculate and create cumulative homographic transformations for each frame
 	std::vector<cv::Mat> h_tilde_transforms;
 	cv::Mat cumulative = cv::Mat::eye(3, 3, CV_64FC1);
-	for (int i = 1; i < frames.size(); i++) {
+	for (int i = 0; i < frames.size(); i++) {
 		cumulative = cumulative * h_transforms[i];
 		h_tilde_transforms.push_back(cumulative.clone());
 	}
@@ -209,7 +231,7 @@ void create_stabilised_frames(std::vector<cv::Mat> frames) {
 	//do a weighted average of the sorrounding translations to get a smoother transition
 	std::vector<float> weights = { 0.1, 0.3, 0.5, 0.3, 0.1 }; //guassian weighting
 	std::vector<cv::Mat> h_smooth_transitions;
-	for (int i = 1; i < h_tilde_transforms.size(); i++) {
+	for (int i = 0; i < h_tilde_transforms.size(); i++) {
 
 		cv::Mat smoothed = cv::Mat::zeros(3, 3, CV_64F);
 		float weighted_sum = 0;
@@ -228,20 +250,22 @@ void create_stabilised_frames(std::vector<cv::Mat> frames) {
 
 	//turn smoothed transitions into actual translations to be used on images
 	std::vector<cv::Mat> u_transforms;
-	for (int i = 1; i < h_smooth_transitions.size(); i++) {
+	for (int i = 0; i < h_smooth_transitions.size(); i++) {
 		std::cout << i << std::endl;
 		cv::Mat U_i = h_smooth_transitions[i].inv() * h_tilde_transforms[i];
 		u_transforms.push_back(U_i);
 	}
 
-	cv::Mat test_img_1;
-	cv::warpPerspective(frames[45], test_img_1, u_transforms[45], frames[51].size());
+	std::vector<cv::Mat> stabilised_frames;
+	for (size_t i = { 0 }; i < u_transforms.size(); ++i) {
+		cv::Mat output;
+		cv::warpPerspective(frames[i], output, u_transforms[i], frames[i].size());
+		stabilised_frames.push_back(output);
+	}
 
-	cv::Mat test_img_2;
-	cv::warpPerspective(frames[51], test_img_2, u_transforms[51], frames[51].size());
-	cv::imshow("dpsaoldpsa", test_img_1);
-	cv::imshow("djsaodjaso", test_img_2);
-	cv::waitKey(0);
+	std::cout << stabilised_frames.size() << std::endl;
+	save_images(stabilised_frames);
+
 }
 
 int main()
@@ -249,8 +273,8 @@ int main()
 
 	std::vector<cv::Mat> frames = load_images("frames\\*.jpg");
 	
-	cv::Mat img_1 = frames[39];
-	cv::Mat img_2 = frames[41];
+	cv::Mat img_1 = frames[41];
+	cv::Mat img_2 = frames[39];
 
 	cv::Mat h = compute_homographic_transformation(img_1, img_2, true);
 
@@ -278,10 +302,26 @@ int main()
 	cv::imshow("stitched", output);
 	cv::waitKey(0);
 
-	std::cout << "frames size: " << frames.size() << std::endl;
-
 	create_stabilised_frames(frames);
 
+
+	//challenge
+
+	cv::Mat full_mask;
+	//warpperspective to get mask out
+
+	//resize to square
+	cv::Mat square_mask;
+	//use cv::resize to get full mask to square mask
+
+	//dynamic programming
+	cv::Mat square_count(square_mask.size(), CV_32SC1, cv::Scalar(0));
+
+	//dynamic programming
+
+	//use minMaxLoc
+
+	cv::Rect rectangle(); //cropped range
 }
 
 
