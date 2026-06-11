@@ -50,7 +50,7 @@ std::vector<cv::Mat> load_images(std::string filepath) {
 }
 
 //output the images to the disk with the format Stable000.png
-void save_images(std::vector<cv::Mat> images) {
+void save_images(std::vector<cv::Mat> images, const std::string& output_name) {
 
 	int i = 0;
 	for (cv::Mat img : images) {
@@ -60,7 +60,7 @@ void save_images(std::vector<cv::Mat> images) {
 		}
 
 		std::ostringstream filename;
-		filename << "Stable" << std::setw(3) << std::setfill('0') << i << ".png";
+		filename << output_name << std::setw(3) << std::setfill('0') << i << ".png";
 
 		cv::imwrite(filename.str(), img);
 		i++;
@@ -209,6 +209,75 @@ cv::Mat compute_homographic_transformation(cv::Mat img_1, cv::Mat img_2, bool dr
 	return h;
 }
 
+void find_best_cropping_windows(const std::vector<cv::Mat>& frames, const std::vector<cv::Mat>& u_transforms) {
+	cv::Size frame_size = frames[0].size();
+	//challenge
+
+	cv::Mat full_mask = cv::Mat::ones(frame_size, CV_8U) * 255;
+	//warpperspective to get mask out
+	for (size_t i = { 0 }; i < u_transforms.size(); ++i) {
+		cv::Mat white = cv::Mat::ones(frames[i].size(), CV_8U) * 255;
+		cv::Mat mask;
+		cv::warpPerspective(white, mask, u_transforms[i], frames[i].size());
+		cv::bitwise_and(full_mask, mask, full_mask);
+	}
+
+	//resize to square
+	cv::Mat square_mask;
+	//use cv::resize to get full mask to square mask
+	cv::resize(full_mask, square_mask, cv::Size(frame_size.width, frame_size.width));
+
+	//dynamic programming
+	//find biggest inscribed square using mask
+	cv::Mat S = cv::Mat::zeros(square_mask.size(), CV_32S);
+	int best_size = 0;
+	int best_r = 0;
+	int best_c = 0;
+	for (int r = square_mask.rows - 1; r >= 0; r--) {
+		for (int c = square_mask.rows - 1; c >= 0; c--) {
+			if (square_mask.at<uchar>(r, c) == 255) {
+				if (r == square_mask.rows - 1 || c == square_mask.cols - 1) {
+					S.at<int>(r, c) = 1;
+
+				}
+				else {
+					S.at<int>(r, c) = std::min({
+						S.at<int>(r + 1, c),
+						S.at<int>(r, c + 1),
+						S.at<int>(r + 1, c + 1)
+						}) + 1;
+				}
+
+				if (S.at<int>(r, c) > best_size) {
+					best_size = S.at<int>(r, c);
+					best_r = r;
+					best_c = c;
+				}
+			}
+		}
+	}
+
+	//use minMaxLoc
+	std::vector<cv::Mat> output;
+	
+	//scale square mask back to rectangle
+	float x_scale = (float)full_mask.cols / 800; // 800/800 = 1.0
+	float y_scale = (float)full_mask.rows / 800; // 450/800 = 0.5625
+
+	cv::Rect rectangle(
+		best_c * x_scale,
+		best_r * y_scale,
+		best_size * x_scale,  //width scaled by x
+		best_size * y_scale   //height scaled by y
+	);
+
+	for (cv::Mat frame : frames) {
+		output.push_back(frame(rectangle));
+	}
+
+	save_images(output, std::string("Cropped"));
+}
+
 void create_stabilised_frames(std::vector<cv::Mat> frames) {
 
 	//create homographic transformations for each frame pair
@@ -264,9 +333,12 @@ void create_stabilised_frames(std::vector<cv::Mat> frames) {
 	}
 
 	std::cout << stabilised_frames.size() << std::endl;
-	save_images(stabilised_frames);
+	save_images(stabilised_frames, std::string("Stable"));
+
+	find_best_cropping_windows(stabilised_frames, u_transforms);
 
 }
+
 
 int main()
 {
@@ -305,23 +377,7 @@ int main()
 	create_stabilised_frames(frames);
 
 
-	//challenge
-
-	cv::Mat full_mask;
-	//warpperspective to get mask out
-
-	//resize to square
-	cv::Mat square_mask;
-	//use cv::resize to get full mask to square mask
-
-	//dynamic programming
-	cv::Mat square_count(square_mask.size(), CV_32SC1, cv::Scalar(0));
-
-	//dynamic programming
-
-	//use minMaxLoc
-
-	cv::Rect rectangle(); //cropped range
+	
 }
 
 
