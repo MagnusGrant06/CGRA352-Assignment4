@@ -53,7 +53,7 @@ std::vector<cv::Mat> load_images(std::string filepath) {
 void save_images(std::vector<cv::Mat> images, const std::string& output_name) {
 
 	int i = 0;
-	for (cv::Mat img : images) {
+	for (const cv::Mat& img : images) {
 
 		if (img.empty()) {
 			std::cerr << " image file is empty, could not save" << std::endl;
@@ -276,6 +276,10 @@ void find_best_cropping_windows(const std::vector<cv::Mat>& frames, const std::v
 	}
 
 	save_images(output, std::string("Cropped"));
+
+	cv::imshow("Cropped frame 031", output[31]);
+	cv::imshow("Cropped frame 040", output[40]);
+	cv::waitKey(0);
 }
 
 void create_stabilised_frames(std::vector<cv::Mat> frames) {
@@ -335,6 +339,10 @@ void create_stabilised_frames(std::vector<cv::Mat> frames) {
 	std::cout << stabilised_frames.size() << std::endl;
 	save_images(stabilised_frames, std::string("Stable"));
 
+	cv::imshow("Stabilised frame 031", stabilised_frames[31]);
+	cv::imshow("Stabilised frame 040", stabilised_frames[40]);
+	cv::waitKey(0);
+
 	find_best_cropping_windows(stabilised_frames, u_transforms);
 
 }
@@ -351,22 +359,22 @@ int main()
 	cv::Mat h = compute_homographic_transformation(img_1, img_2, true);
 
 
-	int border = 100; // padding around the outside
+	int border = 100; //padding around the outside
 
-	// offset matrix to push img_2 inward
+	//offset matrix to push img_2 inward
 	cv::Mat translation = (cv::Mat_<double>(3, 3) <<
 		1, 0, border,
 		0, 1, border,
 		0, 0, 1);
 
-	// make canvas big enough to include the border on all sides
+	//make canvas big enough to include the border on all sides
 	cv::Size output_size(img_1.cols + border * 2, std::max(img_1.rows, img_2.rows) + border * 2);
 	cv::Mat output(output_size, img_1.type(), cv::Scalar(0, 0, 0)); // green background
 
-	// copy img_2 offset by the border
+	//copy img_2 offset by the border
 	img_2.copyTo(output(cv::Rect(border, border, img_2.cols, img_2.rows)));
 
-	// apply translation to homography so img_1 also gets offset
+	// apply translation to homography
 	cv::Mat shifted_h = translation * h;
 	cv::warpPerspective(img_1, output, shifted_h, output_size,
 		cv::INTER_LINEAR, cv::BORDER_TRANSPARENT);
@@ -377,7 +385,6 @@ int main()
 	create_stabilised_frames(frames);
 
 
-	
 }
 
 
